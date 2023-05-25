@@ -3,9 +3,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
+
 #define CODE_ERROR 1
 #define CODE_SUCCESS 0
-
+typedef unsigned char BYTE;
 typedef struct
 {
     int value1;
@@ -14,17 +16,18 @@ typedef struct
 
 typedef struct
 {
-    void *array;
-    void *head;
-    void *tail;
+    BYTE *array;
+    BYTE *head;
+    BYTE *tail;
     int capacity;
     int size;
     int count;
+    pthread_mutex_t lock;
 } CircularBuffer;
 
 int cb_init(CircularBuffer *cb, int capacity, int item_size)
 {
-    cb->array = malloc(capacity * item_size);
+    cb->array = (BYTE *)malloc(capacity * item_size);
 
     if (cb->array == NULL)
     {
@@ -38,7 +41,7 @@ int cb_init(CircularBuffer *cb, int capacity, int item_size)
         cb->capacity = capacity;
         cb->head = cb->array;
         cb->tail = cb->array;
-
+        pthread_mutex_init(&cb->lock, NULL);
         return CODE_SUCCESS;
     }
 }
@@ -47,8 +50,14 @@ char cb_is_empty(CircularBuffer *cb)
     return cb->count == 0;
 }
 
+inline void __shift_item(CircularBuffer *cb, BYTE **ptr)
+{
+    *ptr = cb->array + ((*ptr - cb->array + cb->size) % (cb->capacity * cb->size));
+}
+
 void *cb_dequeue(CircularBuffer *cb)
 {
+    pthread_mutex_lock(&cb->lock);
     void *result = NULL;
     if (cb_is_empty(cb))
         return result;
@@ -56,19 +65,15 @@ void *cb_dequeue(CircularBuffer *cb)
     {
         result = cb->head;
         cb->count--;
-       __shift_item(cb, &cb->head);
+        __shift_item(cb, &cb->head);
     }
+    pthread_mutex_unlock(&cb->lock);
     return result;
 }
 
-inline void __shift_item(CircularBuffer* cb, void **ptr )
-{
-    *ptr = cb->array + ((*ptr - cb->array + cb->size) % (cb->capacity * cb->size));
-
-}
 void cb_enqueue(CircularBuffer *cb, void *item)
 {
-
+    pthread_mutex_lock(&cb->lock);
     memcpy(cb->tail, item, cb->size);
     __shift_item(cb, &cb->tail);
     if (cb->count < cb->capacity)
@@ -81,9 +86,11 @@ void cb_enqueue(CircularBuffer *cb, void *item)
 
         __shift_item(cb, &cb->head);
     }
+    pthread_mutex_unlock(&cb->lock);
 }
-void *cb_get(CircularBuffer *cb, int index)
+void *__cb_get(CircularBuffer *cb, int index)
 {
+
     void *result = NULL;
     if (cb->count > index)
     {
@@ -92,15 +99,25 @@ void *cb_get(CircularBuffer *cb, int index)
 
     return result;
 }
+void *cb_get(CircularBuffer *cb, int index)
+{
+    void *result = NULL ;
+    pthread_mutex_lock(&cb->lock);
+    result = __cb_get(cb, index);
+    pthread_mutex_unlock(&cb->lock) ;
+    return result;
+}
 void cb_print(CircularBuffer *cb)
 {
     int i;
+    pthread_mutex_lock(&cb->lock);
     printf("cb count %d\n", cb->count);
     for (int i = 0; i < cb->count; i++)
     {
-        Item *t = (Item *)cb_get(cb, i);
+        Item *t = (Item *)__cb_get(cb, i);
         printf("%d %d \n", t->value1, t->value2);
     }
+    pthread_mutex_unlock(&cb->lock);
 }
 
 int main()
